@@ -13,6 +13,7 @@ import {
 } from "@api/MessageEvents";
 import { definePluginSettings } from "@api/Settings";
 import definePlugin, { OptionType } from "@utils/types";
+import { Logger } from "@utils/Logger";
 import { Message } from "@vencord/discord-types";
 import {
     ChannelStore,
@@ -59,6 +60,8 @@ const settings = definePluginSettings({
     },
 });
 
+const logger = new Logger("AutoPGP");
+
 const cleanPgpKey = (key: string) => {
     if (!key || typeof key !== "string") return "";
     key = key.trim();
@@ -88,7 +91,7 @@ async function loadPrivateKey(privateKeyArmored: string, passphrase: string) {
         key = await window.openpgp.decryptKey({ privateKey: key, passphrase });
         return key;
     } catch (e) {
-        console.error("PGP: could not decrypt private key", e);
+        logger.error("PGP: could not decrypt private key", e);
         return null;
     }
 }
@@ -102,7 +105,7 @@ async function decryptPGPMessage(armoredMessage: string): Promise<string | null>
         const { privateKey: privateKeyArmored, passphrase } = settings.store;
 
         if (!privateKeyArmored) {
-            console.error("Private key not set for decryption");
+            logger.error("Private key not set for decryption");
             return null;
         }
 
@@ -116,7 +119,7 @@ async function decryptPGPMessage(armoredMessage: string): Promise<string | null>
 
         return typeof data === "string" ? data : new TextDecoder().decode(data);
     } catch (error) {
-        console.error("PGP Decryption failed:", error);
+        logger.error("PGP Decryption failed:", error);
         return null;
     }
 }
@@ -208,7 +211,7 @@ export default definePlugin({
                 })
                 .then(eval)
                 .catch(err => {
-                    console.error("[AutoPGP] Failed to load openpgp.js:", err);
+                    logger.error("Failed to load openpgp.js:", err);
                     showToast("Failed to load openpgp.js. The plugin will not work.", Toasts.Type.FAILURE);
                 });
         }
@@ -270,7 +273,7 @@ export default definePlugin({
                 message.content = encryptedMessage;
                 return true;
             } catch (error) {
-                console.error("PGP Encryption failed:", error);
+                logger.error("PGP Encryption failed:", error);
                 pgpError("could not encrypt the message. It will not be sent.");
                 message.content = "";
                 return false;
