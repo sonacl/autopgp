@@ -12,10 +12,11 @@ import {
     removeMessagePreSendListener,
 } from "@api/MessageEvents";
 import { definePluginSettings } from "@api/Settings";
-import definePlugin, { OptionType } from "@utils/types";
 import { Logger } from "@utils/Logger";
+import definePlugin, { OptionType } from "@utils/types";
 import { Message } from "@vencord/discord-types";
 import {
+    Button,
     ChannelStore,
     Menu,
     React,
@@ -26,32 +27,57 @@ import {
 
 import { DecryptionAccessory, handleDecrypt } from "./DecryptionAccessory";
 import { buildKeyInputModal } from "./KeyInputModal";
+import { buildSetupModal } from "./SetupModal";
 
 const pgpBlockRegex = /(-----BEGIN PGP (?:PUBLIC KEY|PRIVATE KEY|MESSAGE) BLOCK-----)([\s\S]*?)(-----END PGP (?:PUBLIC KEY|PRIVATE KEY|MESSAGE) BLOCK-----)/;
 
-declare global {
-    interface Window {
-        openpgp: any;
+declare global { interface Window { openpgp: any; } }
+
+type Secrets = { publicKey: string; privateKey: string; passphrase: string };
+
+async function setSecrets(secrets: Secrets) {
+    try {
+        await DataStore.set("pgpSecrets", secrets);
+    } catch (e) {
+        logger.error("Failed to save PGP secrets to DataStore", e);
+        showToast("Failed to save PGP secrets.", Toasts.Type.FAILURE);
     }
 }
 
+async function getSecrets(): Promise<Secrets> {
+    try {
+        const plain = (await DataStore.get("pgpSecrets")) ?? {};
+        return {
+            publicKey: plain.publicKey ?? "",
+            privateKey: plain.privateKey ?? "",
+            passphrase: plain.passphrase ?? "",
+        };
+    } catch (e) {
+        logger.error("Failed to read PGP secrets from DataStore", e);
+        return { publicKey: "", privateKey: "", passphrase: "" };
+    }
+}
+
+const SetupKeysComponent = () => (
+    <Button
+        color={Button.Colors.BRAND}
+        onClick={async () => {
+            const current = await getSecrets();
+            buildSetupModal(current.publicKey, current.privateKey, current.passphrase, async (pub, priv, pass) => {
+                await setSecrets({ publicKey: pub, privateKey: priv, passphrase: pass });
+                showToast("PGP keys saved.", Toasts.Type.SUCCESS);
+            });
+        }}
+    >
+        Setup keys and passphrase
+    </Button>
+);
+
 const settings = definePluginSettings({
-    publicKey: {
-        type: OptionType.STRING,
-        description: "Your PGP public key",
-        default: "",
-        multiline: true,
-    },
-    privateKey: {
-        type: OptionType.STRING,
-        description: "Your PGP private key",
-        default: "",
-        multiline: true,
-    },
-    passphrase: {
-        type: OptionType.STRING,
-        description: "Passphrase for your private key (if any)",
-        default: "",
+    setup: {
+        type: OptionType.COMPONENT,
+        description: "Quickly set your PGP keys and passphrase",
+        component: SetupKeysComponent,
     },
     decryptMessages: {
         type: OptionType.BOOLEAN,
@@ -102,7 +128,7 @@ async function readKeysFromArmored(armoredKeys: string[]) {
 
 async function decryptPGPMessage(armoredMessage: string): Promise<string | null> {
     try {
-        const { privateKey: privateKeyArmored, passphrase } = settings.store;
+        const { privateKey: privateKeyArmored, passphrase } = await getSecrets();
 
         if (!privateKeyArmored) {
             logger.error("Private key not set for decryption");
@@ -244,7 +270,7 @@ export default definePlugin({
             }
 
             try {
-                const { publicKey: publicKeyArmored, privateKey: privateKeyArmored, passphrase } = settings.store;
+                const { publicKey: publicKeyArmored, privateKey: privateKeyArmored, passphrase } = await getSecrets();
 
                 if (!privateKeyArmored || !publicKeyArmored) {
                     pgpError("your public or private key is not set. Message not sent.");
